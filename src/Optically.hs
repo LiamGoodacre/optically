@@ -1,11 +1,13 @@
 module Optically where
 
 import Data.Function ((&))
+import Data.Functor.Const (Const (..))
 import Data.Functor.Day (Day (..))
 import Data.Functor.Day qualified as Day
 import Data.Functor.Identity (Identity (..))
 import Data.Functor.Product (Product (..))
 import Data.Kind
+import Data.Void (absurd)
 
 type f ~> g = forall i. f i -> g i
 
@@ -71,9 +73,25 @@ instance (m ~ ReverseDirection w, ReverseDirection m ~ w) => Reversible (Glass m
 
 ---
 
+type EachHas ::
+  (a -> b -> Constraint) ->
+  ([a] -> b -> Constraint)
+type family EachHas c ks p where
+  EachHas c '[] p = ()
+  EachHas c (k ': ks) p = (c k p, EachHas c ks p)
+
+type Super ::
+  forall k.
+  (k -> k -> k -> k -> Type) ->
+  [k -> k -> k -> k -> Type]
+type family Super i
+
 type Optical p a b s t = p a b -> p s t
 
-class Optically k p where optically :: k a b s t -> Optical p a b s t
+type SuperOptically k p = EachHas Optically (Super k) p
+
+class (SuperOptically k p) => Optically k p where
+  optically :: k a b s t -> Optical p a b s t
 
 ---
 
@@ -135,16 +153,43 @@ type Colens1Like = Glass LTR ProductLike
 
 ---
 
-type EachHas ::
-  (a -> b -> Constraint) ->
-  ([a] -> b -> Constraint)
-type family EachHas c ks p where
-  EachHas c '[] p = ()
-  EachHas c (k ': ks) p = (c k p, EachHas c ks p)
+type instance Super @j Viewer = '[]
 
-type CoreOptics ks a b s t = forall p. (EachHas Optically ks p) => Optical p a b s t
+type instance Super @j Like = '[]
 
-type Optics ks a b s t = CoreOptics (IsoLike ': OsiLike ': ks) a b s t
+type instance Super @j IsoLike = '[]
+
+type instance Super @j OsiLike = '[]
+
+type instance Super @Type LensLike = '[IsoLike]
+
+type instance Super @Type ColensLike = '[OsiLike]
+
+type instance Super @Type PrismLike = '[IsoLike]
+
+type instance Super @Type CoprismLike = '[OsiLike]
+
+type instance Super @Type GrateLike = '[IsoLike]
+
+type instance Super @Type CograteLike = '[OsiLike]
+
+type instance Super @Type TraversalLike = '[LensLike, PrismLike]
+
+type instance Super @Type ViewLike = '[CoprismLike, LensLike]
+
+type instance Super @(j -> Type) ViewLike = '[IsoLike]
+
+type instance Super @Type ReviewLike = '[PrismLike, ColensLike]
+
+type instance Super @(j -> Type) ReviewLike = '[OsiLike]
+
+type instance Super @(Type -> Type) SummerLike = '[IsoLike]
+
+type instance Super @(j -> Type) Lens1Like = '[IsoLike]
+
+---
+
+type Optics ks a b s t = forall p. (EachHas Optically ks p) => Optical p a b s t
 
 type Optic k a b s t = Optics '[k] a b s t
 
@@ -173,6 +218,8 @@ type Coprism a b s t = Optic CoprismLike a b s t
 type Grate a b s t = Optic GrateLike a b s t
 
 type Cograte a b s t = Optic CograteLike a b s t
+
+type AffineTraversal a b s t = Optics '[LensLike, PrismLike] a b s t
 
 type Traversal a b s t = Optic TraversalLike a b s t
 
@@ -216,10 +263,6 @@ type Summer' a s = Summer a a s s
 
 type Cosummer' a s = Cosummer a a s s
 
----
-
-type AffineTraversal a b s t = Optics '[LensLike, PrismLike] a b s t
-
 type AffineTraversal' a s = AffineTraversal a a s s
 
 ---
@@ -234,7 +277,7 @@ instance (Cat ((:->) @j)) => Optically (Viewer @j) (Viewer @j r x) where
 
 ---
 
-instance (forall a b. Optically d (j a b)) => Optically d (App o j x y) where
+instance (forall a b. Optically d (j a b), SuperOptically d (App o j x y)) => Optically d (App o j x y) where
   optically d (App k) = App (optically d k)
   {-# INLINE optically #-}
 
@@ -242,7 +285,13 @@ instance (forall a b. Optically d (j a b)) => Optically d (App o j x y) where
 
 newtype Re p a b s t = Re {getRe :: p t s -> p b a}
 
-instance (Reversible m w, Optically w p) => Optically m (Re p x y) where
+instance
+  ( Reversible m w,
+    Optically w p,
+    SuperOptically m (Re p x y)
+  ) =>
+  Optically m (Re p x y)
+  where
   optically d (Re q) = Re (q . optically (reversed d))
   {-# INLINE optically #-}
 
@@ -252,11 +301,17 @@ re o = getRe (o (Re id))
 
 ---
 
-windowAppLike :: (s :-> o e a) -> (o e b :-> t) -> Optic (Glass RTL (App o Like)) a b s t
+windowAppLike ::
+  (s :-> o e a) ->
+  (o e b :-> t) ->
+  Optic (Glass RTL (App o Like)) a b s t
 windowAppLike sea ebt = optically (Window (App (Like sea ebt)))
 {-# INLINE windowAppLike #-}
 
-mirrorAppLike :: (b :-> o e t) -> (o e s :-> a) -> Optic (Glass LTR (App o Like)) a b s t
+mirrorAppLike ::
+  (b :-> o e t) ->
+  (o e s :-> a) ->
+  Optic (Glass LTR (App o Like)) a b s t
 mirrorAppLike bet esa = optically (Mirror (App (Like bet esa)))
 {-# INLINE mirrorAppLike #-}
 
@@ -265,7 +320,7 @@ view sa = optically (Window (Viewer sa))
 {-# INLINE view #-}
 
 review :: (b :-> t) -> Review a b s t
-review bt = re (view bt)
+review bt = optically (Mirror (Viewer bt))
 {-# INLINE review #-}
 
 iso :: (s :-> a) -> (b :-> t) -> Iso a b s t
@@ -322,7 +377,13 @@ instance Optically OsiLike (->) where
   optically (Mirror (Like bt sa)) ab = bt <<< ab <<< sa
   {-# INLINE optically #-}
 
-instance (forall t. Functor (o t), Optically (Glass RTL k) (->)) => Optically (Glass RTL (App o k)) (->) where
+instance
+  ( forall t. Functor (o t),
+    Optically (Glass RTL k) (->),
+    SuperOptically (Glass RTL (App o k)) (->)
+  ) =>
+  Optically (Glass RTL (App o k)) (->)
+  where
   optically (Window (App k)) = optically (Window k) . fmap
   {-# INLINE optically #-}
 
@@ -339,11 +400,13 @@ instance Optically OsiLike (:~>) where
   {-# INLINE optically #-}
 
 instance Optically SummerLike (:~>) where
-  optically (Window (App k)) (Nt ab) = optically (Window k) (Nt (Day.trans2 ab))
+  optically (Window (App k)) (Nt ab) =
+    optically (Window k) (Nt (Day.trans2 ab))
   {-# INLINE optically #-}
 
 instance Optically Lens1Like (:~>) where
-  optically (Window (App k)) (Nt ab) = optically (Window k) (Nt (\(Pair e a) -> Pair e (ab a)))
+  optically (Window (App k)) (Nt ab) =
+    optically (Window k) (Nt \(Pair e a) -> Pair e (ab a))
   {-# INLINE optically #-}
 
 (*%~) :: Optical (:~>) a b s t -> (a ~> b) -> (s ~> t)
@@ -353,15 +416,25 @@ instance Optically Lens1Like (:~>) where
 newtype Star f i o = Star {runStar :: i -> f o}
 
 instance (Functor f) => Optically IsoLike (Star f) where
-  optically (Window (Like sa bt)) (Star afb) = Star (fmap bt . afb . sa)
+  optically (Window (Like sa bt)) (Star afb) =
+    Star (fmap bt . afb . sa)
   {-# INLINE optically #-}
 
 instance (Functor f) => Optically OsiLike (Star f) where
-  optically (Mirror (Like bt sa)) (Star afb) = Star (fmap bt . afb . sa)
+  optically (Mirror (Like bt sa)) (Star afb) =
+    Star (fmap bt . afb . sa)
   {-# INLINE optically #-}
 
-instance (forall t. Traversable (o t), Applicative f, Optically (Glass RTL k) (Star f)) => Optically (Glass RTL (App o k)) (Star f) where
-  optically (Window (App k)) = optically (Window k) . (Star . traverse . runStar)
+instance
+  ( forall t. Traversable (o t),
+    Applicative f,
+    Optically (Glass RTL k) (Star f),
+    SuperOptically (Glass RTL (App o k)) (Star f)
+  ) =>
+  Optically (Glass RTL (App o k)) (Star f)
+  where
+  optically (Window (App k)) =
+    optically (Window k) . (Star . traverse . runStar)
   {-# INLINE optically #-}
 
 traverseOf :: Optical (Star f) a b s t -> (a :-> f b) -> s :-> f t
@@ -371,35 +444,43 @@ traverseOf o = runStar . o . Star
 ---
 
 instance (Cat ((:->) @j)) => Optically IsoLike (Viewer @j x y) where
-  optically (Window (Like sa _)) (Viewer ar) = Viewer (ar <<< sa)
+  optically (Window (Like sa _)) (Viewer ar) =
+    Viewer (ar <<< sa)
   {-# INLINE optically #-}
 
 instance (Cat ((:->) @j)) => Optically OsiLike (Viewer @j x y) where
-  optically (Mirror (Like _bt sa)) (Viewer ar) = Viewer (ar <<< sa)
+  optically (Mirror (Like _bt sa)) (Viewer ar) =
+    Viewer (ar <<< sa)
   {-# INLINE optically #-}
 
-instance (Cat ((:->) @j)) => Optically ViewLike (Viewer @j x y) where
-  optically (Window (Viewer sa)) (Viewer ar) = Viewer (ar <<< sa)
+instance (Cat ((:->) @j)) => Optically ViewLike (Viewer @(j -> Type) x y) where
+  optically (Window (Viewer sa)) (Viewer ar) =
+    Viewer (ar <<< sa)
   {-# INLINE optically #-}
 
 instance Optically LensLike (Viewer x y) where
-  optically (Window (App l)) (Viewer ar) = optically (Window l) (Viewer (ar <<< snd))
+  optically (Window (App l)) (Viewer ar) =
+    optically (Window l) (Viewer (ar <<< snd))
   {-# INLINE optically #-}
 
 instance (Monoid x) => Optically PrismLike (Viewer x y) where
-  optically (Window (App l)) (Viewer ar) = optically (Window l) (Viewer (either mempty ar))
+  optically (Window (App l)) (Viewer ar) =
+    optically (Window l) (Viewer (either mempty ar))
   {-# INLINE optically #-}
 
 instance Optically CoprismLike (Viewer x y) where
-  optically (Mirror (App l)) = optically (Viewer Right) . optically (Window (reversed l))
+  optically (Mirror (App l)) =
+    optically (Viewer Right) . optically (Window (reversed l))
   {-# INLINE optically #-}
 
 instance (Monoid x) => Optically TraversalLike (Viewer x y) where
-  optically (Window (App l)) (Viewer ar) = optically (Window l) (Viewer (foldMap ar))
+  optically (Window (App l)) (Viewer ar) =
+    optically (Window l) (Viewer (foldMap ar))
   {-# INLINE optically #-}
 
 instance Optically Lens1Like (Viewer x y) where
-  optically (Window (App l)) (Viewer ar) = optically (Window l) (Viewer (ar <<< Nt (\(Pair _ r) -> r)))
+  optically (Window (App l)) (Viewer ar) =
+    optically (Window l) (Viewer (ar <<< Nt \(Pair _ r) -> r))
   {-# INLINE optically #-}
 
 (^.) :: s -> Optical (Viewer a b) a b s t -> a
@@ -416,8 +497,76 @@ instance Optically Lens1Like (Viewer x y) where
 
 ---
 
+instance Optically IsoLike (TraversalLike x y) where
+  optically (Window (Like sa bt)) (Window (App (Like sea ebt))) =
+    Window . App $ Like (sea . sa) (bt . ebt)
+  {-# INLINE optically #-}
+
+instance Optically OsiLike (TraversalLike x y) where
+  optically (Mirror (Like bt sa)) (Window (App (Like sea ebt))) =
+    Window . App $ Like (sea . sa) (bt . ebt)
+  {-# INLINE optically #-}
+
+instance Optically LensLike (TraversalLike x y) where
+  optically (Window (App (Like sea ebt))) (Window (App (Like ayx fyb))) =
+    Window . App $
+      Like
+        (\s -> Walk (Pair (Const s) (ayx (snd (sea s)))))
+        (ebt . \(Walk (Pair (Const s) ey)) -> (fst (sea s), fyb ey))
+  {-# INLINE optically #-}
+
+asLens :: Optical (LensLike a b) a b s t -> Lens a b s t
+asLens o =
+  optically . o . Window . App $
+    Like ((),) snd
+{-# INLINE asLens #-}
+
+asPrism :: Optical (PrismLike a b) a b s t -> Prism a b s t
+asPrism o =
+  optically . o . Window . App $
+    Like Right (either absurd id)
+{-# INLINE asPrism #-}
+
+asGrate :: Optical (GrateLike a b) a b s t -> Grate a b s t
+asGrate o =
+  optically . o . Window . App $
+    Like const ($ ())
+{-# INLINE asGrate #-}
+
+asTraversal :: Optical (TraversalLike a b) a b s t -> Traversal a b s t
+asTraversal o =
+  optically . o . Window . App $
+    Like
+      (Walk . Identity)
+      (runIdentity . getWalk)
+{-# INLINE asTraversal #-}
+
+instance (Cat ((:->) @k)) => Optically IsoLike (ViewLike (x :: k) y) where
+  optically (Window (Like sa _bt)) (Window (Viewer ar)) =
+    Window (Viewer (ar <<< sa))
+  {-# INLINE optically #-}
+
+instance (Cat ((:->) @k)) => Optically OsiLike (ViewLike (x :: k) y) where
+  optically (Mirror (Like _bt sa)) (Window (Viewer ar)) =
+    Window (Viewer (ar <<< sa))
+  {-# INLINE optically #-}
+
+instance Optically LensLike (ViewLike x y) where
+  optically (Window (App (Like sea _ebt))) (Window (Viewer ar)) =
+    Window (Viewer (ar <<< snd <<< sea))
+  {-# INLINE optically #-}
+
+asView :: (Cat ((:->) @k)) => Optical (ViewLike (a :: k) b) a b s t -> View a b s t
+asView o = optically . o . Window . Viewer $ identity
+{-# INLINE asView #-}
+
+---
+
 swapTuple :: Iso (x, a) (x, b) (a, x) (b, x)
-swapTuple = iso (\(x, a) -> (a, x)) (\(b, x) -> (x, b))
+swapTuple =
+  iso
+    (\(x, a) -> (a, x))
+    (\(b, x) -> (x, b))
 {-# INLINE swapTuple #-}
 
 _2 :: Lens a b (x, a) (x, b)
@@ -429,7 +578,10 @@ _1 = swapTuple . _2
 {-# INLINE _1 #-}
 
 swapEither :: Iso (Either x a) (Either x b) (Either a x) (Either b x)
-swapEither = iso (\case Left a -> Right a; Right x -> Left x) (\case Left b -> Right b; Right x -> Left x)
+swapEither =
+  iso
+    (\case Left a -> Right a; Right x -> Left x)
+    (\case Left b -> Right b; Right x -> Left x)
 {-# INLINE swapEither #-}
 
 _Right :: Prism a b (Either x a) (Either x b)
@@ -461,7 +613,10 @@ _am = swapDay . _pm
 {-# INLINE _am #-}
 
 swapProduct :: Iso (Product e a) (Product e b) (Product a e) (Product b e)
-swapProduct = iso (Nt (\(Pair e a) -> Pair a e)) (Nt (\(Pair b e) -> Pair e b))
+swapProduct =
+  iso
+    (Nt \(Pair e a) -> Pair a e)
+    (Nt \(Pair b e) -> Pair e b)
 {-# INLINE swapProduct #-}
 
 __2 :: Lens1 a b (Product e a) (Product e b)
@@ -496,7 +651,13 @@ _2_Right :: AffineTraversal a b (x, Either y a) (x, Either y b)
 _2_Right = _2 . _Right
 {-# INLINE _2_Right #-}
 
----
+_2view :: View a b (x, a) (x, b)
+_2view = _2
+{-# INLINE _2view #-}
+
+_2traversal :: Traversal a b (x, a) (x, b)
+_2traversal = _2
+{-# INLINE _2traversal #-}
 
 main :: IO ()
 main = do

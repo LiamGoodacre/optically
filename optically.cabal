@@ -32,15 +32,16 @@ library
     hs-source-dirs:   src
     default-language: GHC2021
     default-extensions:
-      , QuantifiedConstraints
+      , BlockArguments
       , DataKinds
       , DerivingStrategies
       , FunctionalDependencies
       , GADTs
       , LambdaCase
       , QuantifiedConstraints
+      , QuantifiedConstraints
       , TypeAbstractions
       , TypeData
       , TypeFamilies
       , UndecidableInstances
-
+      , UndecidableSuperClasses
