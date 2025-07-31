@@ -659,6 +659,8 @@ _2traversal :: Traversal a b (x, a) (x, b)
 _2traversal = _2
 {-# INLINE _2traversal #-}
 
+-- $> main
+
 main :: IO ()
 main = do
   let eg0 = (True, 42) :: (Bool, Int)
