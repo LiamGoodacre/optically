@@ -25,7 +25,7 @@ common warnings
 
 library
     import:           warnings
-    exposed-modules:  MyLib
+    exposed-modules:  Optically
     build-depends:
       , base ^>=4.21.0.0
       , kan-extensions
