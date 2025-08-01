@@ -1,12 +1,14 @@
 module Optically where
 
 import Data.Function ((&))
+import Data.Functor.Compose (Compose (..))
 import Data.Functor.Const (Const (..))
 import Data.Functor.Day (Day (..))
 import Data.Functor.Day qualified as Day
 import Data.Functor.Identity (Identity (..))
 import Data.Functor.Product (Product (..))
 import Data.Kind
+import Data.Proxy (Proxy (..))
 import Data.Void (absurd)
 
 type f ~> g = forall i. f i -> g i
@@ -95,6 +97,11 @@ type Optical p a b s t = p a b -> p s t
 
 type SuperOptically k p = EachHas Optically (Super k) p
 
+type Optically ::
+  forall i.
+  (i -> i -> i -> i -> Type) ->
+  (i -> i -> Type) ->
+  Constraint
 class (SuperOptically k p) => Optically k p where
   optically :: k a b s t -> Optical p a b s t
 
@@ -180,6 +187,8 @@ type instance Super @Type CograteLike = '[OsiLike]
 
 type instance Super @Type TraversalLike = '[LensLike, PrismLike]
 
+type instance Super @Type CotraversalLike = '[ColensLike, CoprismLike]
+
 type instance Super @Type ViewLike = '[CoprismLike, LensLike]
 
 type instance Super @(j -> Type) ViewLike = '[IsoLike]
@@ -189,6 +198,8 @@ type instance Super @Type ReviewLike = '[PrismLike, ColensLike]
 type instance Super @(j -> Type) ReviewLike = '[OsiLike]
 
 type instance Super @(Type -> Type) SummerLike = '[IsoLike]
+
+type instance Super @(Type -> Type) CosummerLike = '[OsiLike]
 
 type instance Super @(j -> Type) Lens1Like = '[IsoLike]
 
@@ -300,15 +311,31 @@ instance (Cat ((:->) @k)) => ProCat @k Viewer where
   Viewer sa <<<< Viewer ar = Viewer (ar <<< sa)
   {-# INLINE (<<<<) #-}
 
+instance (Cat ((:->) @k)) => ProCat @k ViewLike where
+  proidentity = Window (Viewer identity)
+  {-# INLINE proidentity #-}
+
+  Window (Viewer sa) <<<< Window (Viewer ar) =
+    Window (Viewer (ar <<< sa))
+  {-# INLINE (<<<<) #-}
+
+instance (Cat ((:->) @k)) => ProCat @k ReviewLike where
+  proidentity = Mirror (Viewer identity)
+  {-# INLINE proidentity #-}
+
+  Mirror (Viewer ar) <<<< Mirror (Viewer sa) =
+    Mirror (Viewer (ar <<< sa))
+  {-# INLINE (<<<<) #-}
+
 instance ProCat LensLike where
   proidentity = Window (App (Like ((),) snd))
   {-# INLINE proidentity #-}
 
   Window (App (Like sea ebt)) <<<< Window (App (Like afx fyb)) =
-    Window . App $
-      Like
-        (\s -> let (e, a) = sea s; (f, x) = afx a in ((e, f), x))
-        (\((e, f), y) -> ebt (e, fyb (f, y)))
+    Window . App $ Like (assocl . fmap afx . sea) (ebt . fmap fyb . assocr)
+    where
+      assocl (e, (f, x)) = ((e, f), x)
+      assocr ((e, f), x) = (e, (f, x))
   {-# INLINE (<<<<) #-}
 
 instance ProCat ColensLike where
@@ -325,14 +352,11 @@ instance ProCat PrismLike where
   Window (App (Like sea ebt)) <<<< Window (App (Like afx fyb)) =
     Window . App $
       Like
-        ( \s ->
-            case sea s of
-              Left e -> Left (Left e)
-              Right a -> case afx a of
-                Left f -> Left (Right f)
-                Right x -> Right x
-        )
-        (ebt . either (fmap (fyb . Left)) (Right . fyb . Right))
+        (assocl . fmap afx . sea)
+        (ebt . fmap fyb . assocr)
+    where
+      assocl = either (Left . Left) (either (Left . Right) Right)
+      assocr = either (either Left (Right . Left)) (Right . Right)
   {-# INLINE (<<<<) #-}
 
 instance ProCat CoprismLike where
@@ -349,7 +373,7 @@ instance ProCat GrateLike where
   Window (App (Like sea ebt)) <<<< Window (App (Like afx fyb)) =
     Window . App $
       Like
-        (\s (e, f) -> afx (sea s e) f)
+        ((\ea (e, f) -> afx (ea e) f) . sea)
         (\efy -> ebt \e -> fyb \f -> efy (e, f))
   {-# INLINE (<<<<) #-}
 
@@ -367,17 +391,247 @@ instance ProCat TraversalLike where
   Window (App (Like sea ebt)) <<<< Window (App (Like afx fyb)) =
     Window . App $
       Like
-        (undefined sea ebt afx fyb)
-        (undefined sea ebt afx fyb)
+        (Walk . Compose . fmap afx . sea)
+        (ebt . fmap fyb . getCompose . getWalk)
+  {-# INLINE (<<<<) #-}
+
+instance ProCat CotraversalLike where
+  proidentity = reversed proidentity
+  {-# INLINE proidentity #-}
+
+  l <<<< r = reversed $ reversed r <<<< reversed l
+  {-# INLINE (<<<<) #-}
+
+instance ProCat SummerLike where
+  proidentity = Window (App (Like undefined undefined))
+  {-# INLINE proidentity #-}
+
+  Window (App (Like sea ebt)) <<<< Window (App (Like afx fyb)) =
+    Window . App $
+      Like
+        (Nt Day.assoc <<< Nt (Day.trans2 (afx *$)) <<< sea)
+        (ebt <<< Nt (Day.trans2 (fyb *$)) <<< Nt Day.disassoc)
+  {-# INLINE (<<<<) #-}
+
+instance ProCat CosummerLike where
+  proidentity = reversed proidentity
+  {-# INLINE proidentity #-}
+
+  l <<<< r = reversed $ reversed r <<<< reversed l
+  {-# INLINE (<<<<) #-}
+
+instance ProCat Lens1Like where
+  proidentity = Window (App (Like (Nt \s -> Pair Proxy s) (Nt \(Pair Proxy t) -> t)))
+  {-# INLINE proidentity #-}
+
+  Window (App (Like sea ebt)) <<<< Window (App (Like afx fyb)) =
+    Window . App $
+      Like
+        (assocl <<< mapProduct afx <<< sea)
+        (ebt <<< mapProduct fyb <<< assocr)
+    where
+      mapProduct :: (x :~> y) -> (Product e x :~> Product e y)
+      mapProduct g = Nt \(Pair e x) -> Pair e (g *$ x)
+      assocl = Nt \(Pair e (Pair f x)) -> Pair (Pair e f) x
+      assocr = Nt \(Pair (Pair e f) x) -> Pair e (Pair f x)
+  {-# INLINE (<<<<) #-}
+
+instance ProCat Colens1Like where
+  proidentity = reversed proidentity
+  {-# INLINE proidentity #-}
+
+  l <<<< r = reversed $ reversed r <<<< reversed l
   {-# INLINE (<<<<) #-}
 
 ---
 
-instance (Cat ((:->) @j)) => Optically (Like @j) (Like @j x y) where
+instance (Cat ((:->) @j)) => Optically @j IsoLike (ViewLike x y) where
+  optically (Window (Like sa _bt)) (Window (Viewer ar)) =
+    Window (Viewer (ar <<< sa))
+  {-# INLINE optically #-}
+
+instance (Cat ((:->) @j)) => Optically @j OsiLike (ViewLike x y) where
+  optically (Mirror (Like _bt sa)) (Window (Viewer ar)) =
+    Window (Viewer (ar <<< sa))
+  {-# INLINE optically #-}
+
+instance Optically LensLike (ViewLike x y) where
+  optically (Window (App (Like sea _ebt))) (Window (Viewer ar)) =
+    Window (Viewer (ar <<< snd <<< sea))
+  {-# INLINE optically #-}
+
+instance Optically CoprismLike (ViewLike x y) where
+  optically = undefined
+  {-# INLINE optically #-}
+
+instance (Cat ((:->) @j)) => Optically @j IsoLike (ReviewLike x y) where
+  optically (Window (Like _sa bt)) (Mirror (Viewer ar)) =
+    Mirror (Viewer (bt <<< ar))
+  {-# INLINE optically #-}
+
+instance (Cat ((:->) @j)) => Optically @j OsiLike (ReviewLike x y) where
+  optically (Mirror (Like bt _sa)) (Mirror (Viewer ar)) =
+    Mirror (Viewer (bt <<< ar))
+  {-# INLINE optically #-}
+
+instance Optically ColensLike (ReviewLike x y) where
+  optically (Mirror (App (Like sea _ebt))) (Mirror (Viewer ar)) =
+    Mirror (Viewer (snd . sea . ar))
+  {-# INLINE optically #-}
+
+instance Optically PrismLike (ReviewLike x y) where
+  optically = undefined
+  {-# INLINE optically #-}
+
+instance Optically IsoLike (LensLike x y) where
+  optically = undefined
+  {-# INLINE optically #-}
+
+instance Optically OsiLike (ColensLike x y) where
+  optically = undefined
+  {-# INLINE optically #-}
+
+instance Optically IsoLike (PrismLike x y) where
+  optically = undefined
+  {-# INLINE optically #-}
+
+instance Optically OsiLike (CoprismLike x y) where
+  optically = undefined
+  {-# INLINE optically #-}
+
+instance Optically IsoLike (GrateLike x y) where
+  optically = undefined
+  {-# INLINE optically #-}
+
+instance Optically OsiLike (CograteLike x y) where
+  optically = undefined
+  {-# INLINE optically #-}
+
+instance Optically IsoLike (TraversalLike x y) where
+  optically (Window (Like sa bt)) (Window (App (Like sea ebt))) =
+    Window . App $ Like (sea . sa) (bt . ebt)
+  {-# INLINE optically #-}
+
+instance Optically OsiLike (TraversalLike x y) where
+  optically (Mirror (Like bt sa)) (Window (App (Like sea ebt))) =
+    Window . App $ Like (sea . sa) (bt . ebt)
+  {-# INLINE optically #-}
+
+instance Optically LensLike (TraversalLike x y) where
+  optically (Window (App (Like sea ebt))) (Window (App (Like ayx fyb))) =
+    Window . App $
+      Like
+        (\s -> Walk (Pair (Const s) (ayx (snd (sea s)))))
+        (ebt . \(Walk (Pair (Const s) ey)) -> (fst (sea s), fyb ey))
+  {-# INLINE optically #-}
+
+instance Optically PrismLike (TraversalLike x y) where
+  optically = undefined
+  {-# INLINE optically #-}
+
+instance Optically IsoLike (CotraversalLike x y) where
+  optically = undefined
+  {-# INLINE optically #-}
+
+instance Optically OsiLike (CotraversalLike x y) where
+  optically = undefined
+  {-# INLINE optically #-}
+
+instance Optically ColensLike (CotraversalLike x y) where
+  optically = undefined
+  {-# INLINE optically #-}
+
+instance Optically CoprismLike (CotraversalLike x y) where
+  optically = undefined
+  {-# INLINE optically #-}
+
+instance Optically IsoLike (SummerLike x y) where
+  optically = undefined
+  {-# INLINE optically #-}
+
+instance Optically OsiLike (CosummerLike x y) where
+  optically = undefined
+  {-# INLINE optically #-}
+
+instance Optically IsoLike (Lens1Like x y) where
+  optically = undefined
+  {-# INLINE optically #-}
+
+---
+
+instance (Cat ((:->) @j)) => Optically @j Like (Like x y) where
   optically = (<<<<)
   {-# INLINE optically #-}
 
-instance (Cat ((:->) @j)) => Optically (Viewer @j) (Viewer @j r x) where
+instance (Cat ((:->) @j)) => Optically @j Viewer (Viewer r x) where
+  optically = (<<<<)
+  {-# INLINE optically #-}
+
+instance (Cat ((:->) @j)) => Optically @j IsoLike (IsoLike x y) where
+  optically = (<<<<)
+  {-# INLINE optically #-}
+
+instance (Cat ((:->) @j)) => Optically @j OsiLike (OsiLike x y) where
+  optically = (<<<<)
+  {-# INLINE optically #-}
+
+instance Optically @Type ViewLike (ViewLike x y) where
+  optically = (<<<<)
+  {-# INLINE optically #-}
+
+instance (Cat ((:->) @(j -> Type))) => Optically @(j -> Type) ViewLike (ViewLike x y) where
+  optically = (<<<<)
+  {-# INLINE optically #-}
+
+instance Optically @Type ReviewLike (ReviewLike x y) where
+  optically = (<<<<)
+  {-# INLINE optically #-}
+
+instance (Cat ((:->) @(j -> Type))) => Optically @(j -> Type) ReviewLike (ReviewLike x y) where
+  optically = (<<<<)
+  {-# INLINE optically #-}
+
+instance Optically LensLike (LensLike x y) where
+  optically = (<<<<)
+  {-# INLINE optically #-}
+
+instance Optically ColensLike (ColensLike x y) where
+  optically = (<<<<)
+  {-# INLINE optically #-}
+
+instance Optically PrismLike (PrismLike x y) where
+  optically = (<<<<)
+  {-# INLINE optically #-}
+
+instance Optically CoprismLike (CoprismLike x y) where
+  optically = (<<<<)
+  {-# INLINE optically #-}
+
+instance Optically GrateLike (GrateLike x y) where
+  optically = (<<<<)
+  {-# INLINE optically #-}
+
+instance Optically CograteLike (CograteLike x y) where
+  optically = (<<<<)
+  {-# INLINE optically #-}
+
+instance Optically TraversalLike (TraversalLike x y) where
+  optically = (<<<<)
+  {-# INLINE optically #-}
+
+instance Optically CotraversalLike (CotraversalLike x y) where
+  optically = (<<<<)
+  {-# INLINE optically #-}
+
+instance Optically SummerLike (SummerLike x y) where
+  optically = (<<<<)
+  {-# INLINE optically #-}
+
+instance Optically CosummerLike (CosummerLike x y) where
+  optically = (<<<<)
+  {-# INLINE optically #-}
+
+instance Optically Lens1Like (Lens1Like x y) where
   optically = (<<<<)
   {-# INLINE optically #-}
 
@@ -398,7 +652,7 @@ instance
   ) =>
   Optically m (Re p x y)
   where
-  optically d (Re q) = Re (q . optically (reversed d))
+  optically d (Re q) = Re (q <<< optically (reversed d))
   {-# INLINE optically #-}
 
 re :: Optical (Re p a b) a b s t -> Optical p t s b a
@@ -603,24 +857,6 @@ instance Optically Lens1Like (Viewer x y) where
 
 ---
 
-instance Optically IsoLike (TraversalLike x y) where
-  optically (Window (Like sa bt)) (Window (App (Like sea ebt))) =
-    Window . App $ Like (sea . sa) (bt . ebt)
-  {-# INLINE optically #-}
-
-instance Optically OsiLike (TraversalLike x y) where
-  optically (Mirror (Like bt sa)) (Window (App (Like sea ebt))) =
-    Window . App $ Like (sea . sa) (bt . ebt)
-  {-# INLINE optically #-}
-
-instance Optically LensLike (TraversalLike x y) where
-  optically (Window (App (Like sea ebt))) (Window (App (Like ayx fyb))) =
-    Window . App $
-      Like
-        (\s -> Walk (Pair (Const s) (ayx (snd (sea s)))))
-        (ebt . \(Walk (Pair (Const s) ey)) -> (fst (sea s), fyb ey))
-  {-# INLINE optically #-}
-
 asLens :: Optical (LensLike a b) a b s t -> Lens a b s t
 asLens o = optically $ o (Window . App $ Like ((),) snd)
 {-# INLINE asLens #-}
@@ -644,21 +880,6 @@ asTraversal o =
       (Walk . Identity)
       (runIdentity . getWalk)
 {-# INLINE asTraversal #-}
-
-instance (Cat ((:->) @k)) => Optically IsoLike (ViewLike (x :: k) y) where
-  optically (Window (Like sa _bt)) (Window (Viewer ar)) =
-    Window (Viewer (ar <<< sa))
-  {-# INLINE optically #-}
-
-instance (Cat ((:->) @k)) => Optically OsiLike (ViewLike (x :: k) y) where
-  optically (Mirror (Like _bt sa)) (Window (Viewer ar)) =
-    Window (Viewer (ar <<< sa))
-  {-# INLINE optically #-}
-
-instance Optically LensLike (ViewLike x y) where
-  optically (Window (App (Like sea _ebt))) (Window (Viewer ar)) =
-    Window (Viewer (ar <<< snd <<< sea))
-  {-# INLINE optically #-}
 
 asView :: (Cat ((:->) @k)) => Optical (ViewLike (a :: k) b) a b s t -> View a b s t
 asView o = optically . o . Window . Viewer $ identity
