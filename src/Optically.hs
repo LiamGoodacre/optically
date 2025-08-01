@@ -362,7 +362,7 @@ instance ProCat PrismLike where
         (ebt . fmap fyb . assocr)
     where
       assocl = either (Left . Left) (either (Left . Right) Right)
-      assocr = either (either Left (Right . Left)) (Right . Right)
+      assocr = either (fmap Left) (Right . Right)
   {-# INLINE (<<<<) #-}
 
 instance ProCat CoprismLike where
@@ -495,31 +495,38 @@ instance Optically ColensLike (ReviewLike x y) where
   {-# INLINE optically #-}
 
 instance Optically PrismLike (ReviewLike x y) where
-  optically = undefined
+  optically (Window (App (Like _sea ebt))) (Mirror (Viewer yb)) =
+    Mirror (Viewer (ebt . Right . yb))
   {-# INLINE optically #-}
 
 instance Optically IsoLike (LensLike x y) where
-  optically = undefined
+  optically (Window (Like sa bt)) (Window (App (Like aex eyb))) =
+    Window (App (Like (aex . sa) (bt . eyb)))
   {-# INLINE optically #-}
 
 instance Optically OsiLike (ColensLike x y) where
-  optically = undefined
+  optically (Mirror (Like bt sa)) (Mirror (App (Like yeb eax))) =
+    Mirror (App (Like (fmap bt . yeb) (eax . fmap sa)))
   {-# INLINE optically #-}
 
 instance Optically IsoLike (PrismLike x y) where
-  optically = undefined
+  optically (Window (Like sa bt)) (Window (App (Like aex eyb))) =
+    Window (App (Like (aex . sa) (bt . eyb)))
   {-# INLINE optically #-}
 
 instance Optically OsiLike (CoprismLike x y) where
-  optically = undefined
+  optically (Mirror (Like bt sa)) (Mirror (App (Like yeb eax))) =
+    Mirror (App (Like (fmap bt . yeb) (eax . fmap sa)))
   {-# INLINE optically #-}
 
 instance Optically IsoLike (GrateLike x y) where
-  optically = undefined
+  optically (Window (Like sa bt)) (Window (App (Like aex eyb))) =
+    Window (App (Like (aex . sa) (bt . eyb)))
   {-# INLINE optically #-}
 
 instance Optically OsiLike (CograteLike x y) where
-  optically = undefined
+  optically (Mirror (Like bt sa)) (Mirror (App (Like yeb eax))) =
+    Mirror (App (Like (fmap bt . yeb) (eax . fmap sa)))
   {-# INLINE optically #-}
 
 instance Optically IsoLike (TraversalLike x y) where
@@ -561,15 +568,17 @@ instance Optically CoprismLike (CotraversalLike x y) where
   {-# INLINE optically #-}
 
 instance Optically IsoLike (SummerLike x y) where
-  optically = undefined
+  optically (Window l) (Window (App r)) = Window (App (l <<<< r))
   {-# INLINE optically #-}
 
 instance Optically OsiLike (CosummerLike x y) where
-  optically = undefined
+  optically (Mirror (Like bt sa)) (Mirror (App (Like yeb eax))) =
+    Mirror (App (Like (Nt (Day.trans2 (bt *$)) <<< yeb) (eax <<< Nt (Day.trans2 (sa *$)))))
   {-# INLINE optically #-}
 
 instance Optically IsoLike (Lens1Like x y) where
-  optically = undefined
+  optically (Window (Like sa bt)) (Window (App (Like aex eyb))) =
+    Window (App (Like (aex <<< sa) (bt <<< eyb)))
   {-# INLINE optically #-}
 
 ---
