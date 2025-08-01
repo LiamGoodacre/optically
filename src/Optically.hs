@@ -28,6 +28,10 @@ type family (:->) @j where
   (:->) @Type = (->)
   (:->) @(j -> Type) = (:~>)
 
+class Vacuous t
+
+instance Vacuous t
+
 class Cat k where
   identity :: k x x
   (<<<) :: k a b -> k x a -> k x b
@@ -42,7 +46,9 @@ instance Cat (:~>) where
 
 type ProCat :: forall j. (j -> j -> j -> j -> Type) -> Constraint
 class ProCat k where
-  proidentity :: k a b a b
+  type ProObj k :: j -> Constraint
+  type ProObj k = Vacuous
+  proidentity :: (ProObj k a, ProObj k b) => k a b a b
   (<<<<) :: k a b s t -> k x y a b -> k x y s t
 
 ---
@@ -402,8 +408,15 @@ instance ProCat CotraversalLike where
   l <<<< r = reversed $ reversed r <<<< reversed l
   {-# INLINE (<<<<) #-}
 
+-- forall a b . Day (f a) (g b) (a -> b -> c)
+
 instance ProCat SummerLike where
-  proidentity = Window (App (Like undefined undefined))
+  type ProObj SummerLike = Functor
+  proidentity =
+    Window . App $
+      Like
+        (Nt \a -> Day (Identity ()) a (const id))
+        (Nt \(Day (Identity unit) g h) -> h unit <$> g)
   {-# INLINE proidentity #-}
 
   Window (App (Like sea ebt)) <<<< Window (App (Like afx fyb)) =
@@ -414,6 +427,7 @@ instance ProCat SummerLike where
   {-# INLINE (<<<<) #-}
 
 instance ProCat CosummerLike where
+  type ProObj CosummerLike = Functor
   proidentity = reversed proidentity
   {-# INLINE proidentity #-}
 
@@ -461,7 +475,8 @@ instance Optically LensLike (ViewLike x y) where
   {-# INLINE optically #-}
 
 instance Optically CoprismLike (ViewLike x y) where
-  optically = undefined
+  optically (Mirror (App (Like _bet esa))) (Window (Viewer ax)) =
+    Window (Viewer (ax . esa . Right))
   {-# INLINE optically #-}
 
 instance (Cat ((:->) @j)) => Optically @j IsoLike (ReviewLike x y) where
