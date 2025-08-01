@@ -38,6 +38,11 @@ instance Cat (:~>) where
   identity = Nt identity
   Nt l <<< Nt r = Nt (l <<< r)
 
+type ProCat :: forall j. (j -> j -> j -> j -> Type) -> Constraint
+class ProCat k where
+  proidentity :: k a b a b
+  (<<<<) :: k a b s t -> k x y a b -> k x y s t
+
 ---
 
 type Viewer :: forall j. j -> j -> j -> j -> Type
@@ -267,12 +272,113 @@ type AffineTraversal' a s = AffineTraversal a a s s
 
 ---
 
+instance (Cat ((:->) @k)) => ProCat @k Like where
+  proidentity = Like identity identity
+  {-# INLINE proidentity #-}
+
+  (<<<<) (Like sa bt) (Like ax yb) = Like (ax <<< sa) (bt <<< yb)
+  {-# INLINE (<<<<) #-}
+
+instance (Cat ((:->) @k)) => ProCat @k IsoLike where
+  proidentity = Window proidentity
+  {-# INLINE proidentity #-}
+
+  Window abst <<<< Window xyab = Window (abst <<<< xyab)
+  {-# INLINE (<<<<) #-}
+
+instance (Cat ((:->) @k)) => ProCat @k OsiLike where
+  proidentity = Mirror proidentity
+  {-# INLINE proidentity #-}
+
+  Mirror tsba <<<< Mirror bayx = Mirror (bayx <<<< tsba)
+  {-# INLINE (<<<<) #-}
+
+instance (Cat ((:->) @k)) => ProCat @k Viewer where
+  proidentity = Viewer identity
+  {-# INLINE proidentity #-}
+
+  Viewer sa <<<< Viewer ar = Viewer (ar <<< sa)
+  {-# INLINE (<<<<) #-}
+
+instance ProCat LensLike where
+  proidentity = Window (App (Like ((),) snd))
+  {-# INLINE proidentity #-}
+
+  Window (App (Like sea ebt)) <<<< Window (App (Like afx fyb)) =
+    Window . App $
+      Like
+        (\s -> let (e, a) = sea s; (f, x) = afx a in ((e, f), x))
+        (\((e, f), y) -> ebt (e, fyb (f, y)))
+  {-# INLINE (<<<<) #-}
+
+instance ProCat ColensLike where
+  proidentity = reversed proidentity
+  {-# INLINE proidentity #-}
+
+  l <<<< r = reversed $ reversed r <<<< reversed l
+  {-# INLINE (<<<<) #-}
+
+instance ProCat PrismLike where
+  proidentity = Window (App (Like Right (either absurd id)))
+  {-# INLINE proidentity #-}
+
+  Window (App (Like sea ebt)) <<<< Window (App (Like afx fyb)) =
+    Window . App $
+      Like
+        ( \s ->
+            case sea s of
+              Left e -> Left (Left e)
+              Right a -> case afx a of
+                Left f -> Left (Right f)
+                Right x -> Right x
+        )
+        (ebt . either (fmap (fyb . Left)) (Right . fyb . Right))
+  {-# INLINE (<<<<) #-}
+
+instance ProCat CoprismLike where
+  proidentity = reversed proidentity
+  {-# INLINE proidentity #-}
+
+  l <<<< r = reversed $ reversed r <<<< reversed l
+  {-# INLINE (<<<<) #-}
+
+instance ProCat GrateLike where
+  proidentity = Window (App (Like const ($ ())))
+  {-# INLINE proidentity #-}
+
+  Window (App (Like sea ebt)) <<<< Window (App (Like afx fyb)) =
+    Window . App $
+      Like
+        (\s (e, f) -> afx (sea s e) f)
+        (\efy -> ebt \e -> fyb \f -> efy (e, f))
+  {-# INLINE (<<<<) #-}
+
+instance ProCat CograteLike where
+  proidentity = reversed proidentity
+  {-# INLINE proidentity #-}
+
+  l <<<< r = reversed $ reversed r <<<< reversed l
+  {-# INLINE (<<<<) #-}
+
+instance ProCat TraversalLike where
+  proidentity = Window (App (Like (Walk . Identity) (runIdentity . getWalk)))
+  {-# INLINE proidentity #-}
+
+  Window (App (Like sea ebt)) <<<< Window (App (Like afx fyb)) =
+    Window . App $
+      Like
+        (undefined sea ebt afx fyb)
+        (undefined sea ebt afx fyb)
+  {-# INLINE (<<<<) #-}
+
+---
+
 instance (Cat ((:->) @j)) => Optically (Like @j) (Like @j x y) where
-  optically (Like sa bt) (Like ax yb) = Like (ax <<< sa) (bt <<< yb)
+  optically = (<<<<)
   {-# INLINE optically #-}
 
 instance (Cat ((:->) @j)) => Optically (Viewer @j) (Viewer @j r x) where
-  optically (Viewer sa) (Viewer ar) = Viewer (ar <<< sa)
+  optically = (<<<<)
   {-# INLINE optically #-}
 
 ---
@@ -516,9 +622,7 @@ instance Optically LensLike (TraversalLike x y) where
   {-# INLINE optically #-}
 
 asLens :: Optical (LensLike a b) a b s t -> Lens a b s t
-asLens o =
-  optically . o . Window . App $
-    Like ((),) snd
+asLens o = optically $ o (Window . App $ Like ((),) snd)
 {-# INLINE asLens #-}
 
 asPrism :: Optical (PrismLike a b) a b s t -> Prism a b s t
