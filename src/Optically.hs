@@ -56,13 +56,14 @@ class ProCat k where
 
 ---
 
-type Viewer :: forall j. j -> j -> j -> j -> Type
+type Viewer :: forall obj. obj -> obj -> obj -> obj -> Type
 newtype Viewer a b s t = Viewer {runViewer :: s :-> a}
 
-type Like :: forall j. j -> j -> j -> j -> Type
+type Like :: forall obj. obj -> obj -> obj -> obj -> Type
 data Like a b s t = Like !(s :-> a) !(b :-> t)
 
-data Tensored o k a b s t = forall e. Tensored !(k (o e a) (o e b) s t)
+data Tensored tensor proarr a b s t
+  = forall e. Tensored !(proarr (tensor e a) (tensor e b) s t)
 
 type data Direction = RTL | LTR
 
@@ -71,12 +72,12 @@ type family ReverseDirection dir where
   ReverseDirection RTL = LTR
   ReverseDirection LTR = RTL
 
-data Glass d k a b s t where
-  Window :: !(k a b s t) -> Glass RTL k a b s t
-  Mirror :: !(k t s b a) -> Glass LTR k a b s t
+data Glass dir proarr a b s t where
+  Window :: !(proarr a b s t) -> Glass RTL proarr a b s t
+  Mirror :: !(proarr t s b a) -> Glass LTR proarr a b s t
 
-class Reversible i o | i -> o, o -> i where
-  reversed :: i a b s t -> o t s b a
+class Reversible input output | input -> output, output -> input where
+  reversed :: input a b s t -> output t s b a
 
 instance Reversible Like Like where
   reversed (Like sa bt) = Like bt sa
@@ -89,40 +90,31 @@ instance (m ~ ReverseDirection w, ReverseDirection m ~ w) => Reversible (Glass m
 
 ---
 
-type EachHas ::
-  (a -> b -> Constraint) ->
-  ([a] -> b -> Constraint)
-type family EachHas c ks p where
-  EachHas c '[] p = ()
-  EachHas c (k ': ks) p = (c k p, EachHas c ks p)
-
 type Super ::
-  forall k.
-  (k -> k -> k -> k -> Type) ->
-  [k -> k -> k -> k -> Type]
-type family Super i
+  forall i j.
+  (i -> j -> Constraint) ->
+  (i -> j -> Constraint)
+type family Super c k p
 
 type Optical p a b s t = p a b -> p s t
-
-type SuperOptically k p = EachHas Optically (Super k) p
 
 type Optically ::
   forall i.
   (i -> i -> i -> i -> Type) ->
   (i -> i -> Type) ->
   Constraint
-class (SuperOptically k p) => Optically k p where
-  optically :: k a b s t -> Optical p a b s t
+class (Super Optically proarr p) => Optically proarr p where
+  optically :: proarr a b s t -> Optical p a b s t
 
 ---
 
-data Walk e a = (Traversable e) => Walk {getWalk :: e a}
+data Walk container index = (Traversable container) => Walk {getWalk :: container index}
 
-deriving stock instance Functor (Walk e)
+deriving stock instance Functor (Walk container)
 
-deriving stock instance Foldable (Walk e)
+deriving stock instance Foldable (Walk container)
 
-deriving stock instance Traversable (Walk e)
+deriving stock instance Traversable (Walk container)
 
 --- Shapes {{{
 
@@ -178,51 +170,58 @@ type Colens1Like = Glass LTR ProductShaped
 
 --- Super instances {{{
 
-type instance Super @j Viewer = '[]
+type instance Super (Optically @j) Viewer p = ()
 
-type instance Super @j Like = '[]
+type instance Super (Optically @j) Like p = ()
 
-type instance Super @j IsoLike = '[]
+type instance Super (Optically @j) IsoLike p = ()
 
-type instance Super @j OsiLike = '[]
+type instance Super (Optically @j) OsiLike p = ()
 
-type instance Super @Type LensLike = '[IsoLike]
+type instance Super (Optically @Type) LensLike p = Optically IsoLike p
 
-type instance Super @Type ColensLike = '[OsiLike]
+type instance Super (Optically @Type) ColensLike p = Optically OsiLike p
 
-type instance Super @Type PrismLike = '[IsoLike]
+type instance Super (Optically @Type) PrismLike p = Optically IsoLike p
 
-type instance Super @Type CoprismLike = '[OsiLike]
+type instance Super (Optically @Type) CoprismLike p = Optically OsiLike p
 
-type instance Super @Type GrateLike = '[IsoLike]
+type instance Super (Optically @Type) GrateLike p = Optically IsoLike p
 
-type instance Super @Type CograteLike = '[OsiLike]
+type instance Super (Optically @Type) CograteLike p = Optically OsiLike p
 
-type instance Super @Type TraversalLike = '[LensLike, PrismLike]
+type instance Super (Optically @Type) TraversalLike p = (Optically LensLike p, Optically PrismLike p)
 
-type instance Super @Type CotraversalLike = '[ColensLike, CoprismLike]
+type instance Super (Optically @Type) CotraversalLike p = (Optically ColensLike p, Optically CoprismLike p)
 
-type instance Super @Type ViewLike = '[CoprismLike, LensLike]
+type instance Super (Optically @Type) ViewLike p = (Optically CoprismLike p, Optically LensLike p)
 
-type instance Super @(j -> Type) ViewLike = '[IsoLike]
+type instance Super (Optically @(j -> Type)) ViewLike p = Optically IsoLike p
 
-type instance Super @Type ReviewLike = '[PrismLike, ColensLike]
+type instance Super (Optically @Type) ReviewLike p = (Optically PrismLike p, Optically ColensLike p)
 
-type instance Super @(j -> Type) ReviewLike = '[OsiLike]
+type instance Super (Optically @(j -> Type)) ReviewLike p = Optically OsiLike p
 
-type instance Super @(Type -> Type) SummerLike = '[IsoLike]
+type instance Super (Optically @(Type -> Type)) SummerLike p = Optically IsoLike p
 
-type instance Super @(Type -> Type) CosummerLike = '[OsiLike]
+type instance Super (Optically @(Type -> Type)) CosummerLike p = Optically OsiLike p
 
-type instance Super @(j -> Type) Lens1Like = '[IsoLike]
+type instance Super (Optically @(j -> Type)) Lens1Like p = Optically IsoLike p
 
 --- }}}
 
 ---
 
-type Optics ks a b s t = forall p. (EachHas Optically ks p) => Optical p a b s t
+type EachHas ::
+  (a -> b -> Constraint) ->
+  ([a] -> b -> Constraint)
+type family EachHas c ks p where
+  EachHas c '[] p = ()
+  EachHas c (k ': ks) p = (c k p, EachHas c ks p)
 
-type Optic k a b s t = Optics '[k] a b s t
+type Optics proarrs a b s t = forall p. (EachHas Optically proarrs p) => Optical p a b s t
+
+type Optic proarr a b s t = forall p. (Optically proarr p) => Optical p a b s t
 
 ---
 
@@ -692,7 +691,7 @@ newtype Re p a b s t = Re {getRe :: p t s -> p b a}
 instance
   ( Reversible m w,
     Optically w p,
-    SuperOptically m (Re p x y)
+    Super Optically m (Re p x y)
   ) =>
   Optically m (Re p x y)
   where
@@ -784,7 +783,7 @@ instance Optically OsiLike (->) where
 instance
   ( forall t. Functor (o t),
     Optically (Glass RTL k) (->),
-    SuperOptically (Glass RTL (Tensored o k)) (->)
+    Super Optically (Glass RTL (Tensored o k)) (->)
   ) =>
   Optically (Glass RTL (Tensored o k)) (->)
   where
@@ -833,7 +832,7 @@ instance
   ( forall t. Traversable (o t),
     Applicative f,
     Optically (Glass RTL k) (Star f),
-    SuperOptically (Glass RTL (Tensored o k)) (Star f)
+    Super Optically (Glass RTL (Tensored o k)) (Star f)
   ) =>
   Optically (Glass RTL (Tensored o k)) (Star f)
   where
